@@ -317,7 +317,7 @@ def optimize(toi, visualize):
 
     losses = []
     # forward('initial{}'.format(robot_id), visualize=visualize)
-    for iter in range(100):
+    for iter in range(10):
         clear()
         # with ti.Tape(loss) automatically clears all gradients
         with ti.Tape(loss):
@@ -386,7 +386,7 @@ def main():
     else:
         optimize(toi=True, visualize=False)
         clear()
-        forward('final{}'.format(robot_id))
+        # forward('final{}'.format(robot_id), visualize=False)
 
 
 if __name__ == '__main__':
