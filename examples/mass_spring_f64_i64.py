@@ -21,10 +21,8 @@ output_vis_interval = 8
 steps = 2048 // 3
 assert steps * 2 <= max_steps
 
-vis_resolution = 1024
-
-scalar = lambda: ti.var(dt=real)
-vec = lambda: ti.Vector(2, dt=real)
+scalar = lambda: ti.field(dtype=real)
+vec = lambda: ti.Vector.field(2, dtype=real)
 
 loss = scalar()
 
@@ -42,13 +40,13 @@ ground_height = 0.1
 gravity = -4.8
 friction = 2.5
 
-gradient_clip = 1
-spring_omega = 10
-damping = 15
+gradient_clip = 1.0
+spring_omega = 10.0
+damping = 15.0
 
 n_springs = 0
-spring_anchor_a = ti.var(ti.i64)
-spring_anchor_b = ti.var(real_i)
+spring_anchor_a = ti.field(ti.i64)
+spring_anchor_b = ti.field(ti.i64)
 spring_length = scalar()
 spring_stiffness = scalar()
 spring_actuation = scalar()
@@ -89,15 +87,13 @@ def place():
 
 
 dt = 0.004
-learning_rate = 25
+learning_rate = 25.0
 
 
 @ti.kernel
 def compute_center(t: ti.i64):
     for _ in range(1):
-        print('_')
-        c = ti.Vector([0.0, 0.0], dt=ti.f64)
-        print('c', c)
+        c = ti.Vector([0.0, 0.0])
         for i in ti.static(range(n_objects)):
             c += x[t, i]
         center[t] = (1.0 / n_objects) * c
@@ -109,7 +105,7 @@ def nn1(t: ti.i64):
         actuation = 0.0
         for j in ti.static(range(n_sin_waves)):
             actuation += weights1[i, j] * ti.sin(spring_omega * t * dt +
-                                                 2 * math.pi / n_sin_waves * j)
+                                                 2.0 * math.pi / n_sin_waves * j)
         for j in ti.static(range(n_objects)):
             offset = x[t, j] - center[t]
             # use a smaller weight since there are too many of them
@@ -167,16 +163,14 @@ def advance_toi(t: ti.i64):
     for i in range(n_objects):
         s = math.exp(-dt * damping)
         old_v = s * v[t - 1, i] + dt * gravity * ti.Vector([0.0, 1.0
-                                                            ], dt=ti.f64) + v_inc[t, i]
+                                                            ]) + v_inc[t, i]
         old_x = x[t - 1, i]
         new_x = old_x + dt * old_v
         toi = 0.0
         new_v = old_v
-        print('new_x[1] < ground_height', new_x[1] < ground_height)
-        print('new_x[1] < ground_height.type', type(new_x[1] < ground_height))
-        if (new_x[1] < ground_height) and (old_v[1] < float(-1e-4)):
+        if new_x[1] < ground_height and old_v[1] < -1e-4:
             toi = -(old_x[1] - ground_height) / old_v[1]
-            new_v = ti.Vector([0.0, 0.0], dt=ti.f64)
+            new_v = ti.Vector([0.0, 0.0])
         new_x = old_x + toi * old_v + (dt - toi) * new_v
 
         v[t, i] = new_v
@@ -192,10 +186,10 @@ def advance_no_toi(t: ti.i64):
         old_x = x[t - 1, i]
         new_v = old_v
         depth = old_x[1] - ground_height
-        if (depth < 0.0) and (new_v[1] < 0.0):
+        if depth < 0.0 and new_v[1] < 0.0:
             # friction projection
-            new_v[0] = 0
-            new_v[1] = 0
+            new_v[0] = 0.0
+            new_v[1] = 0.0
         new_x = old_x + dt * new_v
         v[t, i] = new_v
         x[t, i] = new_x
@@ -206,54 +200,46 @@ def compute_loss(t: ti.i64):
     loss[None] = -x[t, head_id][0]
 
 
-gui = ti.core.GUI("Mass Spring Robot", ti.veci(1024, 1024))
-canvas = gui.get_canvas()
+gui = ti.GUI("Mass Spring Robot", (512, 512), background_color=0xFFFFFF)
 
 
 def forward(output=None, visualize=True):
-    # if random.random() > 0.5:
-    #     goal[None] = [0.9, 0.2]
-    # else:
-    #     goal[None] = [0.1, 0.2]
+    if random.random() > 0.5:
+        goal[None] = [0.9, 0.2]
+    else:
+        goal[None] = [0.1, 0.2]
     goal[None] = [0.9, 0.2]
-    print('goal created')
+
     interval = vis_interval
     if output:
         interval = output_vis_interval
         os.makedirs('mass_spring/{}/'.format(output), exist_ok=True)
-    
+
     total_steps = steps if not output else steps * 2
-    print('total steps created')
+
     for t in range(1, total_steps):
-        print('t', t)
-        print('t.type', type(t))
-        a = t-1
-        print('type a', type(a))
         compute_center(t - 1)
-        print('center computed')
         nn1(t - 1)
         nn2(t - 1)
-        print('nn done')
         apply_spring_force(t - 1)
-        print('force applied')
         if use_toi:
             advance_toi(t)
         else:
             advance_no_toi(t)
-        print('toi')
-        if visualize:
-            canvas.clear(0xFFFFFF)
-            canvas.path(ti.vec(0, ground_height),
-                        ti.vec(1, ground_height)).color(0x0).radius(3).finish()
+
+        if (t + 1) % interval == 0 and visualize:
+            gui.line(begin=(0, ground_height),
+                     end=(1, ground_height),
+                     color=0x0,
+                     radius=3)
 
             def circle(x, y, color):
-                canvas.circle(ti.vec(x, y)).color(
-                    ti.rgb_to_hex(color)).radius(7).finish()
+                gui.circle((x, y), ti.rgb_to_hex(color), 7)
 
             for i in range(n_springs):
 
                 def get_pt(x):
-                    return ti.vec(x[0], x[1])
+                    return (x[0], x[1])
 
                 a = act[t - 1, i] * 0.5
                 r = 2
@@ -263,10 +249,10 @@ def forward(output=None, visualize=True):
                 else:
                     r = 4
                     c = ti.rgb_to_hex((0.5 + a, 0.5 - abs(a), 0.5 - a))
-                canvas.path(
-                    get_pt(x[t, spring_anchor_a[i]]),
-                    get_pt(x[t,
-                             spring_anchor_b[i]])).color(c).radius(r).finish()
+                gui.line(begin=get_pt(x[t, spring_anchor_a[i]]),
+                         end=get_pt(x[t, spring_anchor_b[i]]),
+                         radius=r,
+                         color=c)
 
             for i in range(n_objects):
                 color = (0.4, 0.6, 0.6)
@@ -275,11 +261,12 @@ def forward(output=None, visualize=True):
                 circle(x[t, i][0], x[t, i][1], color)
             # circle(goal[None][0], goal[None][1], (0.6, 0.2, 0.2))
 
-            gui.update()
             if output:
-                gui.screenshot('mass_spring/{}/{:04d}.png'.format(output, t))
-    pritn('pre loss')
-    loss[None] = 0
+                gui.show('mass_spring/{}/{:04d}.png'.format(output, t))
+            else:
+                gui.show()
+
+    loss[None] = 0.0
     compute_loss(steps - 1)
 
 
@@ -316,7 +303,6 @@ def setup_robot(objects, springs):
 def optimize(toi, visualize):
     global use_toi
     use_toi = toi
-    print('in op')
     for i in range(n_hidden):
         for j in range(n_input_states()):
             weights1[i, j] = np.random.randn() * math.sqrt(
@@ -327,28 +313,30 @@ def optimize(toi, visualize):
             # TODO: n_springs should be n_actuators
             weights2[i, j] = np.random.randn() * math.sqrt(
                 2.0 / (n_hidden + n_springs)) * 3.0
-    print('weight created')
+    print('weights1', weights1.to_numpy())
+    print('weights2', weights2.to_numpy())
+    print('bias1', bias1.to_numpy())
+    print('bias2', bias2.to_numpy())
     losses = []
     # forward('initial{}'.format(robot_id), visualize=visualize)
-    for iter in range(100):
+    for iter in range(10):
         clear()
         # with ti.Tape(loss) automatically clears all gradients
-        print('iter', iter)
         with ti.Tape(loss):
             forward(visualize=visualize)
 
         print('Iter=', iter, 'Loss=', loss[None])
 
-        total_norm_sqr = 0
+        total_norm_sqr = 0.0
         for i in range(n_hidden):
             for j in range(n_input_states()):
-                total_norm_sqr += weights1.grad[i, j]**2
-            total_norm_sqr += bias1.grad[i]**2
+                total_norm_sqr += weights1.grad[i, j]**2.0
+            total_norm_sqr += bias1.grad[i]**2.0
 
         for i in range(n_springs):
             for j in range(n_hidden):
-                total_norm_sqr += weights2.grad[i, j]**2
-            total_norm_sqr += bias2.grad[i]**2
+                total_norm_sqr += weights2.grad[i, j]**2.0
+            total_norm_sqr += bias2.grad[i]**2.0
 
         print(total_norm_sqr)
 
@@ -398,9 +386,8 @@ def main():
         pickle.dump(ret, open('losses.pkl', 'wb'))
         print("Losses saved to losses.pkl")
     else:
-        print('pre op')
         optimize(toi=True, visualize=False)
-        # clear()
+        clear()
         # forward('final{}'.format(robot_id))
 
 
